@@ -19,9 +19,9 @@
 package dev.kobalt.msgboxgen.web.generate
 
 import dev.kobalt.msgboxgen.web.resource.ResourceRepository
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withPermit
 import java.awt.Color
 import java.io.BufferedInputStream
 import java.io.BufferedReader
@@ -47,7 +47,54 @@ object GenerateRepository {
     val defaultButtonTextColor = Color(0, 0, 0)
     val defaultButtonBackgroundColor = Color(192, 192, 192)
 
-    private val semaphore = Semaphore(1)
+    private val semaphore = Semaphore(5)
+
+    suspend fun generate(
+        outputStream: OutputStream,
+        title: String? = null,
+        message: String? = null,
+        buttons: String? = null,
+        icon: String? = null,
+        font: String? = null,
+        width: Int? = null,
+        titleBarStartColor: String? = null,
+        titleBarEndColor: String? = null,
+        titleBarTextColor: String? = null,
+        windowBackgroundColor: String? = null,
+        messageTextColor: String? = null,
+        buttonTextColor: String? = null,
+        buttonBackgroundColor: String? = null
+    ) = withContext(Dispatchers.IO) {
+        val list = mutableListOf<String>()
+        list.add("java")
+        jarPath?.let { list.add("-jar"); list.add(it) }
+        title?.let { list.add("--title"); list.add(it) }
+        message?.let { list.add("--message"); list.add(it) }
+        buttons?.let { list.add("--buttons"); list.add(it) }
+        icon?.let { list.add("--iconPath"); list.add(it) }
+        font?.let { list.add("--fontPath"); list.add(it) }
+        width?.let { list.add("--width"); list.add(it.toString()) }
+        titleBarStartColor?.let { list.add("--titleBarStartColor"); list.add(it) }
+        titleBarEndColor?.let { list.add("--titleBarEndColor"); list.add(it) }
+        titleBarTextColor?.let { list.add("--titleBarTextColor"); list.add(it) }
+        windowBackgroundColor?.let { list.add("--windowBackgroundColor"); list.add(it) }
+        messageTextColor?.let { list.add("--messageTextColor"); list.add(it) }
+        buttonTextColor?.let { list.add("--buttonTextColor"); list.add(it) }
+        buttonBackgroundColor?.let { list.add("--buttonBackgroundColor"); list.add(it) }
+        val process = ProcessBuilder(list).start()
+
+        val stdout = BufferedInputStream(process.inputStream)
+        val stderr = BufferedReader(InputStreamReader(process.errorStream))
+        val stderrJob = launch(Dispatchers.IO) {
+            println(stderr.readText())
+        }
+        val stdoutJob = async(Dispatchers.IO) {
+            outputStream.write(stdout.readBytes())
+        }
+        stderrJob.join()
+        stdoutJob.await()
+        outputStream
+    }
 
     suspend fun submit(
         outputStream: OutputStream,
@@ -66,35 +113,26 @@ object GenerateRepository {
         buttonBackgroundColor: String? = null
     ): OutputStream {
         return withContext(Dispatchers.IO) {
-            semaphore.acquire()
-
-            val list = mutableListOf<String>()
-            list.add("java")
-            jarPath?.let { list.add("-jar"); list.add(it) }
-            title?.let { list.add("--title"); list.add(it) }
-            message?.let { list.add("--message"); list.add(it) }
-            buttons?.let { list.add("--buttons"); list.add(it) }
-            icon?.let { list.add("--iconPath"); list.add(it) }
-            font?.let { list.add("--fontPath"); list.add(it) }
-            width?.let { list.add("--width"); list.add(it.toString()) }
-            titleBarStartColor?.let { list.add("--titleBarStartColor"); list.add(it) }
-            titleBarEndColor?.let { list.add("--titleBarEndColor"); list.add(it) }
-            titleBarTextColor?.let { list.add("--titleBarTextColor"); list.add(it) }
-            windowBackgroundColor?.let { list.add("--windowBackgroundColor"); list.add(it) }
-            messageTextColor?.let { list.add("--messageTextColor"); list.add(it) }
-            buttonTextColor?.let { list.add("--buttonTextColor"); list.add(it) }
-            buttonBackgroundColor?.let { list.add("--buttonBackgroundColor"); list.add(it) }
-
-            val process = ProcessBuilder(list).start()
-            BufferedInputStream(process.inputStream).use { stdout ->
-                outputStream.write(stdout.readBytes())
+            semaphore.withPermit {
+                withTimeout(5000) {
+                    generate(
+                        outputStream,
+                        title,
+                        message,
+                        buttons,
+                        icon,
+                        font,
+                        width,
+                        titleBarStartColor,
+                        titleBarEndColor,
+                        titleBarTextColor,
+                        windowBackgroundColor,
+                        messageTextColor,
+                        buttonTextColor,
+                        buttonBackgroundColor
+                    )
+                }
             }
-            var s: String?
-            BufferedReader(InputStreamReader(process.errorStream)).use { stderr ->
-                while (stderr.readLine().also { s = it } != null) println(s)
-            }
-            semaphore.release()
-            outputStream
         }
     }
 
